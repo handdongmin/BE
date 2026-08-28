@@ -14,6 +14,7 @@ from openai import APIError, APITimeoutError, RateLimitError
 from pydantic import BaseModel, Field
 
 from ditto_agent import configure, get, resume, start
+from ditto_agent.llm.client import LLMClient
 from ditto_agent.schema import DraftContext, StartResult
 
 _invoke_lock = threading.RLock()
@@ -54,6 +55,18 @@ class StartSessionRequest(BaseModel):
 
 class ResumeSessionRequest(BaseModel):
     answer: str = Field(min_length=1, max_length=1000)
+
+
+class TranslationRequest(BaseModel):
+    content: str = Field(min_length=1, max_length=4000)
+    source_language: str = Field(min_length=2, max_length=10)
+    target_language: str = Field(min_length=2, max_length=10)
+
+
+class TranslationResponse(BaseModel):
+    translated_content: str
+    source_language: str
+    target_language: str
 
 
 def _error(status: int, code: str, message: str) -> JSONResponse:
@@ -131,6 +144,7 @@ def health() -> dict[str, str]:
         "status": "ok",
         "llmMode": os.getenv("DITTO_LLM_MODE", "live"),
         "model": os.getenv("DITTO_OPENAI_MODEL", "o3-mini"),
+        "translationModel": os.getenv("DITTO_TRANSLATION_MODEL", "gpt-4o-mini"),
     }
 
 
@@ -182,3 +196,28 @@ def get_session(thread_id: str) -> StartResult:
 def answer_session(thread_id: str, body: ResumeSessionRequest) -> StartResult:
     with _invoke_lock:
         return resume(thread_id, body.answer.strip())
+
+
+@app.post(
+    "/internal/v1/translations",
+    response_model=TranslationResponse,
+    dependencies=[Depends(require_internal_key)],
+)
+def translate_message(body: TranslationRequest) -> TranslationResponse:
+    source_language = body.source_language.strip().lower()
+    target_language = body.target_language.strip().lower()
+    if source_language == target_language:
+        return TranslationResponse(
+            translated_content=body.content,
+            source_language=source_language,
+            target_language=target_language,
+        )
+    with _invoke_lock:
+        result = LLMClient().translate_text(
+            body.content.strip(), source_language, target_language
+        )
+    return TranslationResponse(
+        translated_content=result.translated_content,
+        source_language=source_language,
+        target_language=target_language,
+    )

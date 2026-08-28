@@ -13,6 +13,7 @@ import org.springframework.web.client.RestClientResponseException;
 public class AiAgentClient {
 
     private final RestClient restClient;
+    private final RestClient translationRestClient;
     private final boolean enabled;
     private final String internalApiKey;
 
@@ -28,6 +29,13 @@ public class AiAgentClient {
         this.restClient = restClientBuilder
                 .baseUrl(baseUrl)
                 .requestFactory(requestFactory)
+                .build();
+        SimpleClientHttpRequestFactory translationRequestFactory = new SimpleClientHttpRequestFactory();
+        translationRequestFactory.setConnectTimeout(3_000);
+        translationRequestFactory.setReadTimeout(15_000);
+        this.translationRestClient = RestClient.builder()
+                .baseUrl(baseUrl)
+                .requestFactory(translationRequestFactory)
                 .build();
         this.enabled = enabled;
         this.internalApiKey = internalApiKey;
@@ -59,6 +67,17 @@ public class AiAgentClient {
                 .body(SessionResult.class));
     }
 
+    public TranslationResult translate(TranslationInput input) {
+        requireEnabled();
+        return executeTranslation(() -> translationRestClient.post()
+                .uri("/internal/v1/translations")
+                .contentType(MediaType.APPLICATION_JSON)
+                .headers(headers -> addInternalKey(headers::set))
+                .body(input)
+                .retrieve()
+                .body(TranslationResult.class));
+    }
+
     private SessionResult execute(ClientCall call) {
         try {
             SessionResult result = call.execute();
@@ -78,6 +97,28 @@ public class AiAgentClient {
         }
     }
 
+    private TranslationResult executeTranslation(TranslationCall call) {
+        try {
+            TranslationResult result = call.execute();
+            if (result == null || result.translatedContent() == null || result.translatedContent().isBlank()) {
+                throw new AiAgentClientException(502, "AI service returned an empty translation");
+            }
+            if (result.translatedContent().length() > 4000) {
+                throw new AiAgentClientException(502, "AI service returned an oversized translation");
+            }
+            return result;
+        } catch (RestClientResponseException exception) {
+            throw new AiAgentClientException(
+                    exception.getStatusCode().value(),
+                    "AI translation request failed: " + exception.getResponseBodyAsString(),
+                    exception);
+        } catch (AiAgentClientException exception) {
+            throw exception;
+        } catch (Exception exception) {
+            throw new AiAgentClientException(502, "AI translation service is unavailable", exception);
+        }
+    }
+
     private void addInternalKey(HeaderSetter setter) {
         if (internalApiKey != null && !internalApiKey.isBlank()) {
             setter.set("X-Internal-Api-Key", internalApiKey);
@@ -93,6 +134,11 @@ public class AiAgentClient {
     @FunctionalInterface
     private interface ClientCall {
         SessionResult execute();
+    }
+
+    @FunctionalInterface
+    private interface TranslationCall {
+        TranslationResult execute();
     }
 
     @FunctionalInterface
@@ -148,6 +194,20 @@ public class AiAgentClient {
     }
 
     private record AnswerInput(String answer) {
+    }
+
+    public record TranslationInput(
+            String content,
+            @JsonProperty("source_language") String sourceLanguage,
+            @JsonProperty("target_language") String targetLanguage
+    ) {
+    }
+
+    public record TranslationResult(
+            @JsonProperty("translated_content") String translatedContent,
+            @JsonProperty("source_language") String sourceLanguage,
+            @JsonProperty("target_language") String targetLanguage
+    ) {
     }
 
     public record SessionResult(

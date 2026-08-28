@@ -112,6 +112,10 @@ class CardTranslation(BaseModel):
     notes: list[str]
 
 
+class TextTranslation(BaseModel):
+    translated_content: str
+
+
 class StartResult(BaseModel):
     thread_id: str
     status: Literal["interrupt", "done"]

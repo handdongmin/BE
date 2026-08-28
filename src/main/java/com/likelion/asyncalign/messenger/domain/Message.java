@@ -37,6 +37,15 @@ public class Message extends BaseEntity {
     @Column(nullable = false, length = 4000)
     private String content;
 
+    @Column(length = 10)
+    private String sourceLanguage;
+
+    @Column(length = 10)
+    private String targetLanguage;
+
+    @Column(length = 4000)
+    private String translatedContent;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 30)
     private DeliveryMode deliveryMode = DeliveryMode.AS_IS;
@@ -100,6 +109,16 @@ public class Message extends BaseEntity {
     public DeliveryStatus getDeliveryStatus() { return deliveryStatus; }
     public ConfirmationStatus getConfirmationStatus() { return confirmationStatus; }
     public Instant getScheduledFor() { return scheduledFor; }
+
+    public String getSourceLanguage() { return sourceLanguage; }
+    public String getTargetLanguage() { return targetLanguage; }
+    public String getTranslatedContent() { return translatedContent; }
+
+    public void applyTranslation(String sourceLanguage, String targetLanguage, String translatedContent) {
+        this.sourceLanguage = sourceLanguage;
+        this.targetLanguage = targetLanguage;
+        this.translatedContent = translatedContent;
+    }
 
     public void markDueAsSent() {
         if (deliveryStatus == DeliveryStatus.SCHEDULED) {

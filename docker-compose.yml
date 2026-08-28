@@ -39,6 +39,7 @@ services:
     environment:
       DITTO_LLM_MODE: ${DITTO_LLM_MODE:-mock}
       DITTO_OPENAI_MODEL: ${DITTO_OPENAI_MODEL:-o3-mini}
+      DITTO_TRANSLATION_MODEL: ${DITTO_TRANSLATION_MODEL:-gpt-4o-mini}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       DITTO_INTERNAL_API_KEY: ${DITTO_INTERNAL_API_KEY:-local-ai-internal-key-change-me}
       DITTO_CHECKPOINT_DB: /app/data/ditto_checkpoints.db

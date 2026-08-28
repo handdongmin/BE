@@ -8,11 +8,13 @@ from ditto_agent.llm.postfilter import filter_false_positive_time
 from ditto_agent.llm.prompts import (
     BATCH_VERIFY_SYSTEM_PROMPT,
     FEW_SHOT_ALLOWLIST,
+    TEXT_TRANSLATE_SYSTEM_PROMPT,
     TRANSLATE_SYSTEM_PROMPT,
     VERIFY_SYSTEM_PROMPT,
     build_batch_user_prompt,
     build_batch_verify_user_prompt,
     build_system_prompt,
+    build_text_translate_user_prompt,
     build_translate_user_prompt,
     build_user_prompt,
     build_verify_user_prompt,
@@ -27,6 +29,7 @@ from ditto_agent.schema import (
     CardTranslation,
     DraftContext,
     ExtractionResult,
+    TextTranslation,
 )
 
 
@@ -479,5 +482,38 @@ class LLMClient:
         if parsed is None:
             raise ValueError(
                 "OpenAI가 구조화된 응답을 반환하지 않음 (refusal 등) — completion 로그 확인 필요"
+            )
+        return parsed
+
+    def translate_text(
+        self,
+        content: str,
+        source_lang: str,
+        target_lang: str,
+    ) -> TextTranslation:
+        if self.mode == "mock":
+            return TextTranslation(
+                translated_content=f"[{target_lang}] {content}",
+            )
+
+        translation_model = os.getenv("DITTO_TRANSLATION_MODEL", "gpt-4o-mini")
+        completion = self._client.chat.completions.parse(
+            model=translation_model,
+            messages=[
+                {"role": "system", "content": TEXT_TRANSLATE_SYSTEM_PROMPT},
+                {
+                    "role": "user",
+                    "content": build_text_translate_user_prompt(
+                        content, source_lang, target_lang
+                    ),
+                },
+            ],
+            response_format=TextTranslation,
+            **_sampling_kwargs(translation_model),
+        )
+        parsed = completion.choices[0].message.parsed
+        if parsed is None:
+            raise ValueError(
+                "OpenAI가 구조화된 번역 응답을 반환하지 않음 (refusal 등)"
             )
         return parsed

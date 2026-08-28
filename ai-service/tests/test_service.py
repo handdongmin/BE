@@ -67,3 +67,29 @@ def test_internal_key_is_required(monkeypatch, tmp_path):
         response = client.get("/internal/v1/sessions/not-found")
         assert response.status_code == 401
         assert response.json()["code"] == "INVALID_INTERNAL_API_KEY"
+
+
+def test_internal_message_translation(monkeypatch, tmp_path):
+    monkeypatch.setenv("DITTO_LLM_MODE", "mock")
+    monkeypatch.setenv("DITTO_INTERNAL_API_KEY", "test-key")
+    monkeypatch.setenv("DITTO_CHECKPOINT_DB", str(tmp_path / "checkpoints.db"))
+
+    from ditto_service.main import app
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/internal/v1/translations",
+            headers={"X-Internal-Api-Key": "test-key"},
+            json={
+                "content": "내일까지 검토 부탁드려요.",
+                "source_language": "ko",
+                "target_language": "en",
+            },
+        )
+
+        assert response.status_code == 200
+        assert response.json() == {
+            "translated_content": "[en] 내일까지 검토 부탁드려요.",
+            "source_language": "ko",
+            "target_language": "en",
+        }

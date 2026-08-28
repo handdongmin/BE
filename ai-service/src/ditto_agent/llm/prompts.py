@@ -165,6 +165,23 @@ TRANSLATE_SYSTEM_PROMPT = """이미 발신자가 모호성 확인까지 끝낸, 
 notes 필드만 응답하세요(다른 필드 없음)."""
 
 
+TEXT_TRANSLATE_SYSTEM_PROMPT = """업무용 채팅 메시지를 지정된 언어로 정확하게 번역합니다.
+원문의 의미, 어조, 고유명사, 숫자, 날짜와 링크를 보존하고 내용을 추가하거나 생략하지 마세요.
+translated_content 필드만 응답하세요."""
+
+
+def build_text_translate_user_prompt(
+    content: str,
+    source_lang: str,
+    target_lang: str,
+) -> str:
+    return (
+        f"원문 언어 코드: {source_lang}\n"
+        f"대상 언어 코드: {target_lang}\n"
+        f"번역할 메시지:\n{content}"
+    )
+
+
 def build_translate_user_prompt(
     task: str,
     request_type: str,

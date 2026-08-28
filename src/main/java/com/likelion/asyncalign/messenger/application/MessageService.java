@@ -22,6 +22,10 @@ import com.likelion.asyncalign.global.error.ErrorCode;
 import com.likelion.asyncalign.alignment.domain.AiReview;
 import com.likelion.asyncalign.alignment.domain.UnderstandingCard;
 import com.likelion.asyncalign.alignment.domain.UnderstandingCardRepository;
+import com.likelion.asyncalign.alignment.application.AiAgentClient;
+import com.likelion.asyncalign.messenger.domain.ConversationMemberRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -30,24 +34,32 @@ import org.springframework.transaction.annotation.Transactional;
 @Transactional(readOnly = true)
 public class MessageService {
 
+    private static final Logger log = LoggerFactory.getLogger(MessageService.class);
+
     private final MessageRepository messageRepository;
     private final ConversationService conversationService;
     private final UserService userService;
     private final AttachmentService attachmentService;
     private final UnderstandingCardRepository cardRepository;
+    private final ConversationMemberRepository conversationMemberRepository;
+    private final AiAgentClient aiAgentClient;
 
     public MessageService(
             MessageRepository messageRepository,
             ConversationService conversationService,
             UserService userService,
             AttachmentService attachmentService,
-            UnderstandingCardRepository cardRepository
+            UnderstandingCardRepository cardRepository,
+            ConversationMemberRepository conversationMemberRepository,
+            AiAgentClient aiAgentClient
     ) {
         this.messageRepository = messageRepository;
         this.conversationService = conversationService;
         this.userService = userService;
         this.attachmentService = attachmentService;
         this.cardRepository = cardRepository;
+        this.conversationMemberRepository = conversationMemberRepository;
+        this.aiAgentClient = aiAgentClient;
     }
 
     public MessagePageResponse getMessages(UUID conversationId, UUID currentUserId, Instant before, int size) {
@@ -93,6 +105,7 @@ public class MessageService {
                 content,
                 DeliveryMode.AS_IS,
                 request.scheduledFor()));
+        translateForRecipient(message, sender);
         attachmentService.attachToMessage(
                 conversation,
                 currentUserId,
@@ -131,6 +144,10 @@ public class MessageService {
                 content,
                 DeliveryMode.AI_REVIEW_CONFIRMED,
                 scheduledFor));
+        message.applyTranslation(
+                review.getSourceLanguage(),
+                review.getRecipientLanguage(),
+                review.getTranslatedContent());
         message.linkAiReview(review);
         attachmentService.attachToMessage(
                 membership.getConversation(),
@@ -142,5 +159,39 @@ public class MessageService {
             membership.markRead(message.getCreatedAt());
         }
         return message;
+    }
+
+    private void translateForRecipient(Message message, User sender) {
+        if (message.getContent().isBlank()) {
+            return;
+        }
+        User recipient = conversationMemberRepository.findAllWithUserByConversationId(
+                        message.getConversation().getId()).stream()
+                .map(ConversationMember::getUser)
+                .filter(user -> !user.getId().equals(sender.getId()))
+                .findFirst()
+                .orElse(null);
+        if (recipient == null) {
+            return;
+        }
+        String sourceLanguage = sender.getPreferredLanguage();
+        String targetLanguage = recipient.getPreferredLanguage();
+        message.applyTranslation(sourceLanguage, targetLanguage, null);
+        if (sourceLanguage == null || targetLanguage == null
+                || sourceLanguage.equalsIgnoreCase(targetLanguage)
+                || !aiAgentClient.isEnabled()) {
+            return;
+        }
+        try {
+            AiAgentClient.TranslationResult result = aiAgentClient.translate(
+                    new AiAgentClient.TranslationInput(
+                            message.getContent(), sourceLanguage, targetLanguage));
+            message.applyTranslation(sourceLanguage, targetLanguage, result.translatedContent());
+        } catch (AiAgentClient.AiAgentClientException exception) {
+            log.warn(
+                    "Message translation failed; sending original message. conversationId={}, error={}",
+                    message.getConversation().getId(),
+                    exception.getMessage());
+        }
     }
 }

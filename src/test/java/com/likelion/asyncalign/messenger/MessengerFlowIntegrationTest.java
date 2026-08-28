@@ -4,10 +4,13 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.likelion.asyncalign.auth.dto.SignUpRequest;
+import com.likelion.asyncalign.alignment.application.AiAgentClient;
 import java.time.LocalTime;
 import java.util.Map;
 import java.util.UUID;
@@ -24,6 +27,9 @@ import com.likelion.asyncalign.workspace.domain.WorkspaceMember;
 import com.likelion.asyncalign.workspace.domain.WorkspaceMemberRepository;
 import com.likelion.asyncalign.workspace.domain.WorkspaceRole;
 import com.likelion.asyncalign.user.domain.UserRepository;
+import com.likelion.asyncalign.user.domain.User;
+import com.likelion.asyncalign.user.domain.WorkRole;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -45,6 +51,9 @@ class MessengerFlowIntegrationTest {
     @Autowired
     UserRepository userRepository;
 
+    @MockitoBean
+    AiAgentClient aiAgentClient;
+
     @Test
     void createDirectConversationAndSendMessage() throws Exception {
         Map<String, Object> seoyeon = signUp("sender@example.com", "이서연", "Asia/Seoul");
@@ -52,6 +61,11 @@ class MessengerFlowIntegrationTest {
         String senderToken = seoyeon.get("accessToken").toString();
         UUID senderId = UUID.fromString(((Map<?, ?>) seoyeon.get("user")).get("id").toString());
         UUID alexId = UUID.fromString(((Map<?, ?>) alex.get("user")).get("id").toString());
+        User sender = userRepository.findById(senderId).orElseThrow();
+        sender.updateProfile("이서연", WorkRole.DEVELOPER, null, "ko");
+        User recipient = userRepository.findById(alexId).orElseThrow();
+        recipient.updateProfile("Alex", WorkRole.PROJECT_MANAGER, null, "en");
+        userRepository.saveAllAndFlush(java.util.List.of(sender, recipient));
 
         String workspaceBody = mockMvc.perform(post("/api/v1/workspaces")
                         .header("Authorization", "Bearer " + senderToken)
@@ -89,6 +103,10 @@ class MessengerFlowIntegrationTest {
         UUID conversationId = UUID.fromString(
                 objectMapper.readValue(conversationBody, new TypeReference<Map<String, Object>>() {}).get("id").toString());
 
+        when(aiAgentClient.isEnabled()).thenReturn(true);
+        when(aiAgentClient.translate(any())).thenReturn(new AiAgentClient.TranslationResult(
+                "Please review it by tomorrow.", "ko", "en"));
+
         mockMvc.perform(post("/api/v1/conversations/{id}/messages", conversationId)
                         .header("Authorization", "Bearer " + senderToken)
                         .contentType(MediaType.APPLICATION_JSON)
@@ -97,13 +115,32 @@ class MessengerFlowIntegrationTest {
                                 "attachmentIds", java.util.List.of(),
                                 "deliveryMode", "AS_IS"))))
                 .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.sourceLanguage").value("ko"))
+                .andExpect(jsonPath("$.targetLanguage").value("en"))
+                .andExpect(jsonPath("$.translatedContent").value("Please review it by tomorrow."))
                 .andExpect(jsonPath("$.senderLocalSentAt").exists())
                 .andExpect(jsonPath("$.viewerLocalSentAt").exists());
 
         mockMvc.perform(get("/api/v1/conversations/{id}/messages", conversationId)
                         .header("Authorization", "Bearer " + senderToken))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.messages[0].content").value("내일까지 검토 부탁드려요."));
+                .andExpect(jsonPath("$.messages[0].content").value("내일까지 검토 부탁드려요."))
+                .andExpect(jsonPath("$.messages[0].translatedContent")
+                        .value("Please review it by tomorrow."));
+
+        when(aiAgentClient.translate(any())).thenThrow(
+                new AiAgentClient.AiAgentClientException(502, "AI unavailable"));
+        mockMvc.perform(post("/api/v1/conversations/{id}/messages", conversationId)
+                        .header("Authorization", "Bearer " + senderToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "content", "번역 실패여도 전송됩니다.",
+                                "attachmentIds", java.util.List.of(),
+                                "deliveryMode", "AS_IS"))))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.content").value("번역 실패여도 전송됩니다."))
+                .andExpect(jsonPath("$.sourceLanguage").value("ko"))
+                .andExpect(jsonPath("$.targetLanguage").value("en"));
     }
 
     private Map<String, Object> signUp(String email, String name, String timeZone) throws Exception {
